@@ -97,8 +97,9 @@
     .walker .back { opacity:.6; }
     @keyframes swing { from { transform:rotate(24deg); } to { transform:rotate(-24deg); } }
     @keyframes bob { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-4%); } }
+    /* 系統開啟「減少動態效果」時仍照常走路，只取消身體上下晃動 */
     @media (prefers-reduced-motion: reduce) {
-      .lane, .walker svg, .walker .limb { animation-play-state:paused; }
+      .walker svg { animation:none; }
     }
   </style>
 </head>
