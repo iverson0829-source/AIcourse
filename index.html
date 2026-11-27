@@ -576,8 +576,10 @@
             </div>
           </div>
 
-          <button type="submit" class="w-full bg-ember-500 hover:bg-ember-600 text-white font-semibold py-4 rounded-full transition inline-flex justify-center items-center gap-2">
-            <i data-lucide="check-circle" class="w-5 h-5"></i>確認送出訂單
+          <!-- 防機器人隱藏欄位（真人看不到） -->
+          <input type="text" id="coWebsite" name="website" tabindex="-1" autocomplete="off" class="hidden" aria-hidden="true" />
+          <button id="coSubmit" type="submit" class="w-full bg-ember-500 hover:bg-ember-600 disabled:opacity-70 disabled:cursor-wait text-white font-semibold py-4 rounded-full transition inline-flex justify-center items-center gap-2">
+            <i data-lucide="check-circle" class="w-5 h-5"></i><span>確認送出訂單</span>
           </button>
         </form>
       </div>
@@ -608,6 +610,9 @@
     /* ---------- 工具 ---------- */
     const $  = (s, r = document) => r.querySelector(s);
     const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+    /* ---------- 訂單 API（Google Apps Script 網頁應用程式網址）----------
+       部署 gas/Code.gs 後，把「網頁應用程式網址」貼在這裡；留空則使用示範模式（不會寫入試算表） */
+    const ORDER_API = '';
     const money = (n) => 'NT$' + n.toLocaleString('zh-TW');
     const img = (id, w = 800) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=${w}&q=80`;
     const refreshIcons = () => { if (window.lucide) window.lucide.createIcons(); };
@@ -985,7 +990,7 @@
       if (err) err.classList.toggle('hidden', !bad);
       return !bad;
     }
-    $('#checkoutForm').addEventListener('submit', (e) => {
+    $('#checkoutForm').addEventListener('submit', async (e) => {
       e.preventDefault();
       const name = $('#coName'), phone = $('#coPhone'), email = $('#coEmail'), addr = $('#coAddress');
       let ok = true;
@@ -994,27 +999,79 @@
       ok = setErr(email, email.value.trim() !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim())) && ok;
       if (getMode() === 'delivery') ok = setErr(addr, !addr.value.trim()) && ok; else setErr(addr, false);
       if (!ok) { toast('請確認紅色標示的欄位', 'alert-circle'); return; }
+      if ($('#coSubmit').disabled) return;              // 避免連點重複送出
 
       const mode = getMode();
-      const total = cartSubtotal() + shipping();
-      const d = new Date();
-      const orderNo = 'JS' + d.getFullYear().toString().slice(2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' + Math.floor(1000 + Math.random() * 9000);
       const store = STORES.find((s) => s.id === $('#coStore').value);
+      const payload = {
+        action: 'createOrder',
+        clientId: checkoutClientId,
+        website: $('#coWebsite').value,
+        mode, store: store.id,
+        customer: { name: name.value.trim(), phone: phone.value.replace(/[\s-]/g, ''), email: email.value.trim(),
+                    address: mode === 'delivery' ? addr.value.trim() : '', note: $('#coNote').value.trim() },
+        items: cart.map((c) => ({ id: c.id, qty: c.qty }))
+      };
+
+      setSubmitting(true);
+      try {
+        const res = await submitOrder(payload);
+        showSuccess(res, mode, store, name.value.trim(), email.value.trim());
+        checkoutClientId = newClientId();
+        cart = []; saveCart(); renderCart();
+        e.target.reset(); syncMode();
+      } catch (err) {
+        toast(err.message || '送出失敗，請稍後再試', 'alert-circle');
+      } finally {
+        setSubmitting(false);
+      }
+    });
+
+    // 一次結帳一個 clientId：網路不穩重送時，後端不會重複建立訂單
+    const newClientId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2));
+    let checkoutClientId = newClientId();
+
+    async function submitOrder(payload) {
+      if (!ORDER_API) {                                    // 示範模式：不連後端
+        await new Promise((r) => setTimeout(r, 600));
+        const d = new Date();
+        return { ok: true, demo: true, total: cartSubtotal() + shipping(),
+          orderNo: 'JS' + d.getFullYear().toString().slice(2) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' + Math.floor(100 + Math.random() * 900) };
+      }
+      if (!navigator.onLine) throw new Error('目前沒有網路連線，請連線後再送出');
+      const ctrl = new AbortController(), timer = setTimeout(() => ctrl.abort(), 25000);
+      try {
+        // text/plain 可避免 CORS 預檢，Apps Script 才收得到
+        const r = await fetch(ORDER_API, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload), signal: ctrl.signal });
+        const data = await r.json();
+        if (!data.ok) throw new Error(data.error || '訂單送出失敗');
+        return data;
+      } catch (err) {
+        if (err.name === 'AbortError') throw new Error('連線逾時，請稍後再試（購物車內容已保留）');
+        if (err instanceof TypeError || err instanceof SyntaxError) throw new Error('暫時無法連線到訂單系統，請稍後再試或致電門市');
+        throw err;
+      } finally { clearTimeout(timer); }
+    }
+
+    function setSubmitting(on) {
+      const btn = $('#coSubmit');
+      btn.disabled = on;
+      btn.querySelector('span').textContent = on ? '訂單送出中…' : '確認送出訂單';
+    }
+
+    function showSuccess(res, mode, store, name, email) {
+      const total = res.total;
       const msg = {
         dine:     `請於約 20 分鐘後至 ${store.name} 櫃台報號入座，應付金額 ${money(total)}。`,
         takeout:  `餐點約 20 分鐘後可於 ${store.name} 取餐，應付金額 ${money(total)}。`,
         delivery: `我們將於 1–3 個工作天內以低溫宅配寄出，應付金額 ${money(total)}。`
       }[mode];
-
-      $('#orderNo').textContent = orderNo;
-      $('#successMsg').textContent = `${name.value.trim()} 您好，${msg} 確認簡訊已發送至 ${phone.value.trim()}。`;
+      $('#orderNo').textContent = res.orderNo;
+      $('#successMsg').textContent = `${name} 您好，${msg}` + (res.demo ? '（示範模式，訂單未寫入系統）' : email ? ` 訂單明細已寄至 ${email}。` : '');
       $('#checkoutFormView').classList.add('hidden');
       $('#checkoutSuccessView').classList.remove('hidden');
       modal.firstElementChild.scrollTop = 0;
-
-      cart = []; saveCart(); renderCart();
-      e.target.reset(); syncMode();
-    });
+    }
 
     /* ---------- 電子報 ---------- */
     $('#newsletterForm').addEventListener('submit', (e) => {
