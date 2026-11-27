@@ -2,7 +2,7 @@
 <html lang="zh-TW" class="scroll-smooth">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>煎時 JIANSHI｜極簡現代鍋貼專賣</title>
   <meta name="description" content="煎時鍋貼：台灣在地豬肉、每日現包、黃金煎脆比例。線上點餐、冷凍禮盒宅配到府。" />
 
@@ -48,7 +48,12 @@
 
   <style>
     /* ---------- 全域細節 ---------- */
-    html { scroll-padding-top: 84px; }
+    html { scroll-padding-top: calc(84px + env(safe-area-inset-top, 0px)); }
+    /* iPhone 瀏海／狀態列安全區域：避免從主畫面開啟時按鈕被狀態列蓋住 */
+    #siteHeader, #cartDrawer { padding-top: env(safe-area-inset-top, 0px); }
+    #checkoutModal { padding-top: env(safe-area-inset-top, 0px); }
+    #bookingFab { margin-bottom: env(safe-area-inset-bottom, 0px); margin-right: env(safe-area-inset-right, 0px); }
+    #cartDrawer > div:last-child { padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px)); }
     body { -webkit-font-smoothing: antialiased; }
     .grain::after {               /* 微質感顆粒 */
       content:""; position:absolute; inset:0; pointer-events:none; opacity:.06;
@@ -612,7 +617,7 @@
     const $$ = (s, r = document) => [...r.querySelectorAll(s)];
     /* ---------- 訂單 API（Google Apps Script 網頁應用程式網址）----------
        部署 gas/Code.gs 後，把「網頁應用程式網址」貼在這裡；留空則使用示範模式（不會寫入試算表） */
-    const ORDER_API = '';
+    const ORDER_API = '';   // 待試算表 setup 完成並驗證後，填入：https://script.google.com/macros/s/AKfycbyhY1SWgcNPvB-qlXeoHOU1ti_m4JzVkuSZo8wyeJpGwceHARvXzftC70zmDqke7dM/exec
     const money = (n) => 'NT$' + n.toLocaleString('zh-TW');
     const img = (id, w = 800) => `https://images.unsplash.com/${id}?auto=format&fit=crop&w=${w}&q=80`;
     const refreshIcons = () => { if (window.lucide) window.lucide.createIcons(); };
@@ -1219,7 +1224,8 @@
       };
 
       /* ---------- 基本場景 ---------- */
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      let pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+      renderer.setPixelRatio(pixelRatio);
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -1233,7 +1239,7 @@
       const sun = new THREE.DirectionalLight(0xffd9b0, 2.4);
       sun.position.set(-8, 12, 10);
       sun.castShadow = true;
-      sun.shadow.mapSize.set(2048, 1024);
+      sun.shadow.mapSize.set(1024, 512);
       Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 12, bottom: -12, near: 1, far: 50 });
       sun.shadow.bias = -0.0006;
       scene.add(sun);
@@ -1549,6 +1555,20 @@
         if (running) { last = performance.now(); requestAnimationFrame(loop); }
       }).observe(host);
 
+      // 效能自動調整：畫面太慢時降低解析度、關閉陰影，避免整頁卡頓、按鈕點不動
+      let perfStart = 0, perfFrames = 0, quality = 2;
+      function adaptQuality(now) {
+        if (!perfStart) { perfStart = now; perfFrames = 0; return; }
+        perfFrames++;
+        if (now - perfStart < 2000) return;
+        const fps = perfFrames * 1000 / (now - perfStart);
+        perfStart = now; perfFrames = 0;
+        if (fps >= 40 || quality === 0) return;
+        quality--;
+        if (quality === 1) { pixelRatio = 1; renderer.setPixelRatio(1); layout(); }
+        else { renderer.shadowMap.enabled = false; scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); maxPeople = Math.min(maxPeople, 8); }
+      }
+
       function loop(now) {
         if (!running) return;
         const dt = Math.min((now - last) / 1000, 0.05); last = now; elapsed += dt;
@@ -1577,6 +1597,7 @@
         camera.lookAt(camera.position.x * 0.6, LOOK_Y, 0);
 
         renderer.render(scene, camera);
+        adaptQuality(now);
         requestAnimationFrame(loop);
       }
 
