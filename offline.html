@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#2a1d14" />
+  <title>煎時 JIANSHI｜目前離線</title>
+  <link rel="icon" type="image/png" href="icons/icon-192.png" />
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100svh; display: grid; place-items: center; padding: 24px;
+           background: radial-gradient(circle at 50% 35%, #4a3424, #2a1d14 70%); color: #faf5ee;
+           font-family: "Noto Sans TC", system-ui, sans-serif; text-align: center; }
+    img { width: 132px; height: 132px; border-radius: 30px; box-shadow: 0 0 60px rgba(242,178,122,.45); }
+    h1 { font-family: "Noto Serif TC", serif; font-size: 26px; margin: 28px 0 10px; }
+    p { color: #e9ddd1; line-height: 1.7; margin: 0 0 28px; }
+    button { background: #d9772b; color: #fff; border: 0; border-radius: 999px; padding: 14px 32px;
+             font-size: 16px; font-weight: 700; cursor: pointer; }
+    button:hover { background: #c4641c; }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="icons/icon-512.png" alt="煎時鍋貼" />
+    <h1>鍋貼還在煎，網路先休息一下</h1>
+    <p>目前沒有網路連線。<br />連上網路後，再回來點一份熱騰騰的鍋貼吧！</p>
+    <button onclick="location.reload()">重新連線</button>
+  </main>
+</body>
+</html>
