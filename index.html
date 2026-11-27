@@ -74,6 +74,32 @@
     @keyframes pulse { from { transform:scale(.5); opacity:1;} to { transform:scale(2.2); opacity:0; } }
     /* 隱藏捲軸（Tab 橫向捲動） */
     .no-scrollbar::-webkit-scrollbar { display:none; } .no-scrollbar { scrollbar-width:none; }
+    /* ---------- 人來人往街景動畫 ---------- */
+    .street { position:absolute; left:0; right:0; bottom:0; height:120px; pointer-events:none; overflow:hidden; }
+    .street::before {             /* 地面漸層 */
+      content:""; position:absolute; inset:0;
+      background:linear-gradient(to top, rgba(42,29,20,.85), rgba(42,29,20,.35) 45%, transparent);
+    }
+    .street::after {              /* 人行道線 */
+      content:""; position:absolute; left:0; right:0; bottom:14px; height:1px;
+      background:linear-gradient(90deg, transparent, rgba(242,178,122,.45) 15%, rgba(242,178,122,.45) 85%, transparent);
+    }
+    .lane { position:absolute; inset:0; will-change:transform; animation:laneR var(--dur) linear var(--delay) infinite; }
+    .lane.to-left { animation-name:laneL; }
+    @keyframes laneR { from { transform:translateX(-8%); } to { transform:translateX(108%); } }
+    @keyframes laneL { from { transform:translateX(108%); } to { transform:translateX(-8%); } }
+    .walker { position:absolute; left:0; bottom:var(--y); width:calc(26px * var(--s)); height:calc(60px * var(--s));
+              color:var(--c); opacity:var(--o); margin-left:calc(-13px * var(--s)); }
+    .lane.to-left .walker { transform:scaleX(-1); }
+    .walker svg { width:100%; height:100%; overflow:visible; animation:bob var(--step) ease-in-out infinite; }
+    .walker .limb { transform-box:fill-box; transform-origin:50% 8%; animation:swing calc(var(--step) * 2) ease-in-out infinite alternate; }
+    .walker .limb.rev { animation-direction:alternate-reverse; }
+    .walker .back { opacity:.6; }
+    @keyframes swing { from { transform:rotate(24deg); } to { transform:rotate(-24deg); } }
+    @keyframes bob { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-4%); } }
+    @media (prefers-reduced-motion: reduce) {
+      .lane, .walker svg, .walker .limb { animation-play-state:paused; }
+    }
   </style>
 </head>
 
@@ -145,8 +171,10 @@
       <img src="https://i.postimg.cc/j2YmMLV1/Chat-GPT-Image-2026nian8yue9ri-xia-wu06-20-57.png"
            alt="剛起鍋、底部金黃酥脆的鍋貼" class="absolute inset-0 w-full h-full object-cover img-fallback" onerror="this.style.display='none'" />
       <div class="absolute inset-0 bg-gradient-to-r from-wood-900/90 via-wood-900/65 to-wood-900/20"></div>
+      <!-- 人來人往街景動畫（由 JS 產生行人） -->
+      <div id="street" class="street" aria-hidden="true"></div>
 
-      <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-20 w-full">
+      <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-36 w-full">
         <div class="max-w-2xl text-white">
           <p class="inline-flex items-center gap-2 text-ember-300 text-xs sm:text-sm tracking-[.3em] mb-6">
             <span class="w-8 h-px bg-ember-300"></span>SINCE 1995 · 手工鍋貼
@@ -1020,10 +1048,54 @@
       $$('.counter').forEach((el) => co.observe(el));
     }
 
+    /* ---------- 人來人往街景 ---------- */
+    function renderStreet() {
+      const street = $('#street'); if (!street) return;
+      const rand = (a, b) => a + Math.random() * (b - a);
+      const colors = ['#faf5ee', '#e9ddd1', '#f2b27a', '#fbe6d3', '#b89a80'];
+      const accessories = [
+        '',                                                                    // 空手
+        '<rect x="-3" y="22" width="9" height="10" rx="2"/>',                   // 提袋
+        '<rect x="-1" y="22" width="7" height="12" rx="1.5"/><path d="M0 22 q2.5-4 5 0" fill="none" stroke="currentColor" stroke-width="1.2"/>' // 外帶袋
+      ];
+      const heads = [
+        '<circle cx="13" cy="6" r="5.5"/>',
+        '<circle cx="13" cy="6" r="5.5"/><rect x="6" y="0" width="14" height="3.5" rx="1.5"/>',   // 帽子
+        '<circle cx="13" cy="6" r="5.5"/><circle cx="9" cy="3" r="3"/>'                         // 包頭
+      ];
+      const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+      const count = window.innerWidth < 640 ? 8 : 15;
+      let html = '';
+      for (let i = 0; i < count; i++) {
+        const depth = Math.random();                       // 0 = 遠, 1 = 近
+        const s = 0.7 + depth * 0.55;
+        const dur = rand(26, 40) - depth * 10;             // 近的走得快
+        const step = (0.42 + (1 - depth) * 0.12).toFixed(2);
+        const dir = Math.random() < 0.5 ? '' : ' to-left';
+        const torso = Math.random() < 0.3
+          ? '<path d="M8 13 h10 l4 22 h-18 z"/>'           // 裙裝
+          : '<rect x="8" y="12" width="10" height="22" rx="4"/>';
+        html += `
+          <div class="lane${dir}" style="--dur:${dur.toFixed(1)}s;--delay:${(-rand(0, dur)).toFixed(1)}s;z-index:${Math.round(depth * 10)}">
+            <div class="walker" style="--s:${s.toFixed(2)};--y:${(14 + (1 - depth) * 26).toFixed(0)}px;--c:${pick(colors)};--o:${(0.45 + depth * 0.5).toFixed(2)};--step:${step}s">
+              <svg viewBox="0 0 26 60" fill="currentColor">
+                <g class="limb back"><rect x="10" y="30" width="5" height="30" rx="2.5"/></g>
+                <g class="limb back rev"><rect x="11" y="14" width="4" height="19" rx="2"/></g>
+                ${torso}
+                ${pick(heads)}
+                <g class="limb rev"><rect x="11" y="30" width="5" height="30" rx="2.5"/></g>
+                <g class="limb"><rect x="11" y="14" width="4" height="19" rx="2"/><g transform="translate(9 0)">${pick(accessories)}</g></g>
+              </svg>
+            </div>
+          </div>`;
+      }
+      street.innerHTML = html;
+    }
+
     /* ---------- 初始化 ---------- */
     $('#year').textContent = new Date().getFullYear();
     renderTabs(); renderMenu(); renderGifts(); renderStores(); renderFaq(); renderCart();
-    setupObservers(); onScroll(); refreshIcons();
+    renderStreet(); setupObservers(); onScroll(); refreshIcons();
   })();
   </script>
 </body>
