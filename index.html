@@ -95,6 +95,14 @@
     .walker .limb { transform-box:fill-box; transform-origin:50% 8%; animation:swing calc(var(--step) * 2) ease-in-out infinite alternate; }
     .walker .limb.rev { animation-direction:alternate-reverse; }
     .walker .back { opacity:.6; }
+    /* 3D 街景畫布：頂部漸隱融入海報 */
+    .street3d { position:absolute; left:0; right:0; bottom:0; height:clamp(230px, 40vh, 380px); pointer-events:none;
+                -webkit-mask-image:linear-gradient(to bottom, transparent, #000 30%); mask-image:linear-gradient(to bottom, transparent, #000 30%);
+                opacity:0; transition:opacity 1.2s ease; }
+    .street3d.ready { opacity:1; }
+    .street3d canvas { width:100% !important; height:100% !important; display:block; }
+    .hero-pad { padding-bottom:clamp(190px, 28vh, 240px); }
+    @media (min-width: 640px) { .hero-pad { padding-bottom:clamp(170px, 30vh, 290px); } }
     @keyframes swing { from { transform:rotate(24deg); } to { transform:rotate(-24deg); } }
     @keyframes bob { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-4%); } }
     /* 系統開啟「減少動態效果」時仍照常走路，只取消身體上下晃動 */
@@ -174,8 +182,9 @@
       <div class="absolute inset-0 bg-gradient-to-r from-wood-900/90 via-wood-900/65 to-wood-900/20"></div>
       <!-- 人來人往街景動畫（由 JS 產生行人） -->
       <div id="street" class="street" aria-hidden="true"></div>
+      <div id="street3d" class="street3d" aria-hidden="true"></div>
 
-      <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-28 pb-36 w-full">
+      <div class="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-28 hero-pad w-full">
         <div class="max-w-2xl text-white">
           <p class="inline-flex items-center gap-2 text-ember-300 text-xs sm:text-sm tracking-[.3em] mb-6">
             <span class="w-8 h-px bg-ember-300"></span>SINCE 1995 · 手工鍋貼
@@ -1098,6 +1107,409 @@
     renderTabs(); renderMenu(); renderGifts(); renderStores(); renderFaq(); renderCart();
     renderStreet(); setupObservers(); onScroll(); refreshIcons();
   })();
+  </script>
+  <!-- =====================================================
+       3D 街景：人來人往、進出煎時店面（Three.js）
+       載入失敗或不支援 WebGL 時，自動保留 2D 版本
+       ===================================================== -->
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js';
+
+    (function () {
+      const host = document.getElementById('street3d');
+      if (!host) return;
+      let renderer;
+      try {
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      } catch (e) { return; }                       // 無 WebGL → 保留 2D
+
+      const C = {
+        cream: 0xf3eadc, cream2: 0xfaf5ee, wood3: 0xb89a80, wood5: 0x7a5a40, wood7: 0x4a3424,
+        wood8: 0x3b2a1e, wood9: 0x2a1d14, ember: 0xd9772b, ember3: 0xf2b27a, ember7: 0xa14f13
+      };
+      const rand = (a, b) => a + Math.random() * (b - a);
+      const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+      const std = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.85, ...o });
+      const canvasTex = (w, h, draw) => {
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        draw(c.getContext('2d'), w, h);
+        const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+        return t;
+      };
+      const box = (w, h, d, mat, x = 0, y = 0, z = 0, parent) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+        m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
+        if (parent) parent.add(m);
+        return m;
+      };
+
+      /* ---------- 基本場景 ---------- */
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.05;
+      host.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(28, 2, 0.1, 120);
+
+      scene.add(new THREE.HemisphereLight(0xfff1e0, 0x3b2a1e, 1.3));
+      const sun = new THREE.DirectionalLight(0xffd9b0, 2.4);
+      sun.position.set(-8, 12, 10);
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(2048, 1024);
+      Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 12, bottom: -12, near: 1, far: 50 });
+      sun.shadow.bias = -0.0006;
+      scene.add(sun);
+
+      /* ---------- 街道 ---------- */
+      const FRONT = -1.5;                                   // 建築立面 z
+      const paving = canvasTex(128, 128, (g, w, h) => {
+        g.fillStyle = '#b89a80'; g.fillRect(0, 0, w, h);
+        g.strokeStyle = 'rgba(74,52,36,.35)'; g.lineWidth = 3; g.strokeRect(0, 0, w, h);
+      });
+      paving.wrapS = paving.wrapT = THREE.RepeatWrapping; paving.repeat.set(80 / 1.2, 5 / 1.2);
+      box(80, 0.2, 5, std(0xffffff, { map: paving }), 0, -0.1, 0.5, scene).castShadow = false;
+      box(80, 0.26, 0.3, std(C.cream), 0, -0.07, 3.1, scene);                         // 路緣
+      box(80, 0.1, 7, std(0x30251d), 0, -0.25, 6.7, scene).castShadow = false;       // 馬路
+      const dashMat = std(0xe9ddd1);
+      for (let x = -40; x < 40; x += 3) box(1.4, 0.02, 0.12, dashMat, x, -0.19, 6.2, scene).castShadow = false;
+
+      // 路燈
+      const poleMat = std(C.wood8, { metalness: 0.3, roughness: 0.6 });
+      const lampMat = new THREE.MeshStandardMaterial({ color: 0xfff1d6, emissive: 0xffc27a, emissiveIntensity: 2.2 });
+      const bulbGeo = new THREE.SphereGeometry(0.14, 16, 12);
+      function addLamps(parent, shopX) {                    // 避開店門前方
+        for (let x = -40; x <= 40; x += 9) {
+          const lx = x + (shopX % 9);
+          if (Math.abs(lx - shopX) < 4) continue;
+          box(0.1, 3.2, 0.1, poleMat, lx, 1.5, 2.85, parent);
+          box(0.5, 0.08, 0.1, poleMat, lx + 0.2, 3.1, 2.85, parent);
+          const bulb = new THREE.Mesh(bulbGeo, lampMat);
+          bulb.position.set(lx + 0.42, 2.98, 2.85); parent.add(bulb);
+        }
+      }
+
+      /* ---------- 煎時店面 ---------- */
+      const shop = new THREE.Group(); scene.add(shop);
+      shop.position.z = FRONT;
+      const W = 5.6, H = 3.4, DOOR_X = 1.4, DOOR_W = 1.2, DOOR_H = 2.3;
+      const wallMat = std(C.cream), woodMat = std(C.wood7), darkMat = std(C.wood8);
+      const doorL = DOOR_X - DOOR_W / 2, doorR = DOOR_X + DOOR_W / 2;
+      box(doorL + W / 2, H, 0.3, wallMat, (doorL - W / 2) / 2, H / 2, -0.15, shop);         // 門左牆
+      box(W / 2 - doorR, H, 0.3, wallMat, (doorR + W / 2) / 2, H / 2, -0.15, shop);         // 門右牆
+      box(DOOR_W, H - DOOR_H, 0.3, wallMat, DOOR_X, (H + DOOR_H) / 2, -0.15, shop);       // 門楣
+      box(W, H, 0.3, wallMat, 0, H / 2, -3, shop);                                        // 後牆
+      box(0.3, H, 2.9, wallMat, -W / 2 + 0.15, H / 2, -1.5, shop);                        // 側牆
+      box(0.3, H, 2.9, wallMat, W / 2 - 0.15, H / 2, -1.5, shop);
+      box(W + 0.3, 0.22, 3.3, darkMat, 0, H + 0.11, -1.5, shop);                          // 屋簷
+      box(W + 0.02, 0.3, 0.34, woodMat, 0, 0.15, -0.14, shop);                           // 踢腳
+      // 門框
+      box(0.1, DOOR_H, 0.36, woodMat, doorL, DOOR_H / 2, -0.15, shop);
+      box(0.1, DOOR_H, 0.36, woodMat, doorR, DOOR_H / 2, -0.15, shop);
+      box(DOOR_W + 0.2, 0.12, 0.36, woodMat, DOOR_X, DOOR_H, -0.15, shop);
+      // 室內（溫暖燈光）
+      const roomMat = new THREE.MeshStandardMaterial({ color: 0x6b4a33, emissive: 0x5a2c10, emissiveIntensity: 0.6, side: THREE.BackSide });
+      const room = new THREE.Mesh(new THREE.BoxGeometry(W - 0.6, H - 0.05, 2.7), roomMat);
+      room.position.set(0, H / 2, -1.6); shop.add(room);
+      box(2.2, 0.9, 0.6, std(C.wood5), -0.3, 0.45, -2.3, shop);                          // 櫃台
+      box(2.3, 0.06, 0.7, std(C.ember), -0.3, 0.93, -2.3, shop);
+      const inLight = new THREE.PointLight(0xffb070, 8, 7, 1.6);
+      inLight.position.set(DOOR_X - 0.4, 2.4, -1.4); shop.add(inLight);
+      // 櫥窗
+      const glass = new THREE.MeshStandardMaterial({ color: 0xffe2bc, emissive: 0xf2a860, emissiveIntensity: 0.9, roughness: 0.3 });
+      box(2.7, 1.5, 0.04, glass, -1.15, 1.55, 0.02, shop).castShadow = false;
+      box(2.85, 0.1, 0.12, woodMat, -1.15, 0.78, 0.05, shop);
+      box(2.85, 0.1, 0.12, woodMat, -1.15, 2.32, 0.05, shop);
+      for (const x of [-2.55, -1.15, 0.25]) box(0.08, 1.6, 0.1, woodMat, x, 1.55, 0.05, shop);
+      // 條紋遮陽棚
+      const stripes = canvasTex(256, 32, (g, w, h) => {
+        for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#faf5ee' : '#d9772b'; g.fillRect(i * w / 8, 0, w / 8, h); }
+      });
+      const awning = box(3.1, 0.06, 1.0, std(0xffffff, { map: stripes }), -1.15, 2.6, 0.45, shop);
+      awning.rotation.x = 0.32;
+      const valance = box(3.1, 0.22, 0.04, std(0xffffff, { map: stripes }), -1.15, 2.36, 0.93, shop);
+      // 招牌
+      const drawSign = (g, w, h) => {
+        g.fillStyle = '#3b2a1e'; g.fillRect(0, 0, w, h);
+        g.strokeStyle = '#d9772b'; g.lineWidth = 6; g.strokeRect(8, 8, w - 16, h - 16);
+        g.fillStyle = '#faf5ee'; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.font = '900 64px "Noto Serif TC", serif'; g.fillText('煎時', w / 2 - 70, h / 2 + 2);
+        g.fillStyle = '#f2b27a'; g.font = '600 26px "Noto Sans TC", sans-serif'; g.fillText('JIANSHI', w / 2 + 95, h / 2 + 4);
+      };
+      const signTex = canvasTex(512, 128, drawSign);
+      const signMat = new THREE.MeshStandardMaterial({ map: signTex, emissive: 0xffffff, emissiveMap: signTex, emissiveIntensity: 0.35 });
+      box(3.4, 0.85, 0.16, [darkMat, darkMat, darkMat, darkMat, signMat, darkMat], 0, H + 0.6, -0.2, shop);
+      if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => {   // 字型載入後重繪招牌
+        drawSign(signTex.image.getContext('2d'), 512, 128); signTex.needsUpdate = true;
+      });
+      // 門簾（暖簾）
+      const noren = [];
+      const norenMat = std(C.ember, { side: THREE.DoubleSide });
+      for (let i = 0; i < 3; i++) {
+        const piv = new THREE.Group();
+        piv.position.set(doorL + 0.06 + (i + 0.5) * (DOOR_W - 0.12) / 3, DOOR_H - 0.06, 0.06);
+        const cloth = box((DOOR_W - 0.16) / 3, 0.62, 0.02, norenMat, 0, -0.31, 0, piv);
+        cloth.castShadow = false;
+        shop.add(piv); noren.push(piv);
+      }
+      // 燈籠
+      const lanterns = [];
+      const lanternMat = new THREE.MeshStandardMaterial({ color: 0xd9472b, emissive: 0xff5a1f, emissiveIntensity: 0.9 });
+      for (const x of [doorL - 0.32, doorR + 0.32]) {
+        const piv = new THREE.Group(); piv.position.set(x, DOOR_H + 0.45, 0.25);
+        box(0.02, 0.2, 0.02, darkMat, 0, -0.1, 0, piv);
+        const l = new THREE.Mesh(new THREE.SphereGeometry(0.17, 20, 14), lanternMat);
+        l.scale.y = 1.25; l.position.y = -0.38; piv.add(l);
+        box(0.16, 0.05, 0.16, darkMat, 0, -0.17, 0, piv); box(0.16, 0.05, 0.16, darkMat, 0, -0.6, 0, piv);
+        shop.add(piv); lanterns.push(piv);
+      }
+      // 蒸籠 + 蒸氣
+      const steamerGroup = new THREE.Group(); steamerGroup.position.set(-W / 2 - 0.45, 0, 0.45); shop.add(steamerGroup);
+      box(0.9, 0.75, 0.6, std(C.wood5), 0, 0.375, 0, steamerGroup);
+      const bambooMat = std(0xd8b47a);
+      for (let i = 0; i < 3; i++) {
+        const s = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.16, 24), bambooMat);
+        s.position.y = 0.84 + i * 0.17; s.castShadow = true; steamerGroup.add(s);
+      }
+      const steam = [];
+      const steamGeo = new THREE.SphereGeometry(0.12, 12, 10);
+      for (let i = 0; i < 9; i++) {
+        const m = new THREE.Mesh(steamGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
+        m.userData.t = i / 9; steamerGroup.add(m); steam.push(m);
+      }
+
+      /* ---------- 鄰近街屋 ---------- */
+      const neighbors = new THREE.Group(); scene.add(neighbors);
+      const facadeColors = [0x8a6b52, 0x9c7c62, 0x6f5442, 0xa88a6f, 0x5e4636];
+      const winOff = std(0x3b2a1e, { roughness: 0.4 });
+      const winOn = new THREE.MeshStandardMaterial({ color: 0xffe0b0, emissive: 0xf2a860, emissiveIntensity: 0.7 });
+      function buildNeighbors(shopX) {
+        neighbors.clear();
+        const gapL = shopX - W / 2 - 1.3, gapR = shopX + W / 2 + 0.2;
+        const fill = (from, to, dir) => {
+          let x = from;
+          while (dir > 0 ? x < to : x > to) {
+            const w = rand(3, 4.6), h = rand(3, 4.4), cx = x + dir * w / 2;
+            const b = new THREE.Group(); b.position.set(cx, 0, FRONT - 0.3);
+            box(w - 0.1, h, 3, std(pick(facadeColors)), 0, h / 2, -1.5, b);
+            box(w + 0.1, 0.16, 3.2, std(C.wood8), 0, h + 0.08, -1.5, b);
+            const cols = Math.max(1, Math.floor(w / 1.3));
+            for (let c = 0; c < cols; c++) {
+              const wx = -w / 2 + (c + 0.5) * w / cols;
+              for (const wy of [1.4, h - 0.9]) {
+                if (wy < 1.2 || (wy === h - 0.9 && h < 3.4)) continue;
+                box(0.7, 0.85, 0.05, Math.random() < 0.35 ? winOn : winOff, wx, wy, 0.02, b).castShadow = false;
+              }
+            }
+            neighbors.add(b);
+            x += dir * w;
+          }
+        };
+        fill(gapR, 42, 1); fill(gapL, -42, -1);
+        addLamps(neighbors, shopX);
+      }
+
+      /* ---------- 行人 ---------- */
+      const GEO = {
+        leg: new THREE.CapsuleGeometry(0.075, 0.68, 4, 8),
+        arm: new THREE.CapsuleGeometry(0.058, 0.48, 4, 8),
+        torso: new THREE.CapsuleGeometry(0.2, 0.42, 4, 12),
+        dress: new THREE.CylinderGeometry(0.17, 0.33, 0.62, 16),
+        head: new THREE.SphereGeometry(0.15, 18, 14),
+        hair: new THREE.SphereGeometry(0.162, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.55),
+        bun: new THREE.SphereGeometry(0.07, 12, 10),
+        hat: new THREE.CylinderGeometry(0.16, 0.18, 0.12, 18),
+        brim: new THREE.CylinderGeometry(0.26, 0.26, 0.02, 20),
+        shoe: new THREE.BoxGeometry(0.12, 0.07, 0.22),
+        bag: new THREE.BoxGeometry(0.2, 0.22, 0.12)
+      };
+      const SKIN = [0xf1d0b0, 0xe6bd98, 0xd2a57c, 0xb07a52, 0x8a5a3a];
+      const TOPS = [0xd9772b, 0xf3eadc, 0x4a3424, 0x7d8f6a, 0x5d7186, 0xb84a3a, 0xe8c27a, 0x2f3b4a];
+      const BOTTOMS = [0x2f2a26, 0x3d4b5c, 0x6b5442, 0xa89a88, 0x1f2328];
+      const HAIR = [0x1e1611, 0x3b2a1e, 0x5c4030, 0x8a6a4a];
+      const people = [];
+      let shopX = 0, halfW = 10, maxPeople = 12;
+
+      function makePerson() {
+        const g = new THREE.Group(), mats = [];
+        const M = (color) => { const m = std(color); mats.push(m); return m; };
+        const mesh = (geo, mat, x, y, z, parent) => {
+          const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; parent.add(m); return m;
+        };
+        const body = new THREE.Group(); g.add(body);
+        const skin = M(pick(SKIN)), top = M(pick(TOPS)), bottom = M(pick(BOTTOMS)), shoe = M(0x1a1410), hairM = M(pick(HAIR));
+        const legs = [], arms = [];
+        for (const s of [-1, 1]) {
+          const leg = new THREE.Group(); leg.position.set(s * 0.11, 0.9, 0); body.add(leg);
+          mesh(GEO.leg, bottom, 0, -0.42, 0, leg);
+          mesh(GEO.shoe, shoe, 0, -0.86, 0.04, leg);
+          legs.push(leg);
+          const arm = new THREE.Group(); arm.position.set(s * 0.27, 1.5, 0); body.add(arm);
+          mesh(GEO.arm, top, 0, -0.27, 0, arm);
+          mesh(GEO.head, skin, 0, -0.58, 0, arm).scale.setScalar(0.42);
+          arms.push(arm);
+        }
+        const t = mesh(GEO.torso, top, 0, 1.28, 0, body); t.scale.z = 0.72;
+        if (Math.random() < 0.3) mesh(GEO.dress, top, 0, 0.95, 0, body);
+        mesh(GEO.head, skin, 0, 1.79, 0, body);
+        const hairStyle = Math.random();
+        if (hairStyle < 0.25) {                                     // 帽子
+          const hm = M(pick([C.wood8, C.ember, C.cream, 0x2f3b4a]));
+          mesh(GEO.hat, hm, 0, 1.92, 0, body); mesh(GEO.brim, hm, 0, 1.87, 0.03, body);
+        } else {
+          mesh(GEO.hair, hairM, 0, 1.8, -0.01, body);
+          if (hairStyle > 0.7) mesh(GEO.bun, hairM, 0, 1.92, -0.12, body);
+        }
+        if (Math.random() < 0.4) {                                  // 提袋 / 外帶袋
+          const bag = mesh(GEO.bag, M(pick([C.ember, C.cream2, 0x8a6b52])), 0.04, -0.68, 0, arms[1]);
+          bag.rotation.y = 0.2;
+        }
+        g.scale.setScalar(rand(0.88, 1.08));
+        scene.add(g);
+        return { g, body, legs, arms, mats, phase: Math.random() * 6.28, speed: rand(0.9, 1.35), heading: 0, path: [], i: 0, opacity: 1 };
+      }
+
+      function setOpacity(p, o) {
+        if (Math.abs(o - p.opacity) < 0.001) return;
+        p.opacity = o;
+        for (const m of p.mats) { m.transparent = o < 1; m.opacity = o; }
+        p.g.visible = o > 0.01;
+      }
+
+      function spawn(initial) {
+        const p = makePerson();
+        const lane = rand(-0.2, 2.5), doorX = shopX + DOOR_X, inside = FRONT - 2.2;
+        const r = Math.random(), type = r < 0.45 ? 'pass' : r < 0.75 ? 'enter' : 'exit';
+        if (type === 'exit') {                                      // 從店裡走出來
+          const dirR = Math.random() < 0.5, endX = dirR ? halfW + 2 : -halfW - 2;
+          p.g.position.set(doorX, 0, initial ? rand(inside, FRONT + 0.4) : inside);
+          p.path = [[doorX, FRONT + 0.5], [doorX + (dirR ? 0.6 : -0.6), lane], [endX, lane]];
+        } else {
+          let dirR = Math.random() < 0.5;
+          let x0 = dirR ? -halfW - 2 : halfW + 2;
+          if (initial) { x0 = rand(-halfW, halfW); if (type === 'enter') dirR = x0 < doorX; }
+          const endX = dirR ? halfW + 2 : -halfW - 2;
+          p.g.position.set(x0, 0, lane);
+          p.path = type === 'pass' ? [[endX, lane]]                 // 路過
+            : [[doorX + rand(-0.15, 0.15), lane], [doorX, FRONT + 0.5], [doorX, inside]];   // 走進店裡
+        }
+        const [tx, tz] = p.path[0];
+        p.heading = Math.atan2(tx - p.g.position.x, tz - p.g.position.z);
+        p.g.rotation.y = p.heading;
+        updateFade(p);
+        people.push(p);
+      }
+
+      function despawn(p) {
+        scene.remove(p.g);
+        p.mats.forEach((m) => m.dispose());
+        people.splice(people.indexOf(p), 1);
+      }
+
+      function updateFade(p) {                                      // 走進店內漸隱
+        const z = p.g.position.z, inShopX = Math.abs(p.g.position.x - (shopX + DOOR_X)) < 1;
+        setOpacity(p, inShopX && z < FRONT ? THREE.MathUtils.clamp(1 - (FRONT - z) / 1.4, 0, 1) : 1);
+      }
+
+      function updatePerson(p, dt) {
+        const pos = p.g.position;
+        const [tx, tz] = p.path[p.i];
+        const dx = tx - pos.x, dz = tz - pos.z, dist = Math.hypot(dx, dz);
+        if (dist < 0.08) {
+          p.i++;
+          if (p.i >= p.path.length) return false;
+          return true;
+        }
+        const want = Math.atan2(dx, dz);
+        let diff = want - p.heading;
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+        p.heading += THREE.MathUtils.clamp(diff, -5 * dt, 5 * dt);
+        p.g.rotation.y = p.heading;
+        const turnSlow = 1 - Math.min(Math.abs(diff), 1.2) * 0.45;
+        const step = Math.min(p.speed * turnSlow * dt, dist);
+        pos.x += (dx / dist) * step; pos.z += (dz / dist) * step;
+        p.phase += dt * p.speed * 5.6 * turnSlow;
+        const sw = Math.sin(p.phase);
+        p.legs[0].rotation.x = sw * 0.55; p.legs[1].rotation.x = -sw * 0.55;
+        p.arms[0].rotation.x = -sw * 0.45; p.arms[1].rotation.x = sw * 0.45;
+        p.body.position.y = Math.abs(Math.cos(p.phase)) * 0.045;
+        updateFade(p);
+        return true;
+      }
+
+      /* ---------- 尺寸 / 相機 ---------- */
+      let CAM_DIST = 13.5; const LOOK_Y = 1.55;
+      let camBaseX = 0;
+      function layout() {
+        const w = host.clientWidth || 1, h = host.clientHeight || 1;
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h; camera.updateProjectionMatrix();
+        CAM_DIST = camera.aspect < 2.2 ? 13.5 * Math.pow(2.2 / camera.aspect, 0.55) : 13.5;   // 窄螢幕拉遠
+        camera.position.z = CAM_DIST;
+        halfW = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect * CAM_DIST;
+        const wide = camera.aspect > 2.2;
+        const newShopX = wide ? halfW * 0.32 : 0;
+        maxPeople = wide ? 16 : 9;
+        if (Math.abs(newShopX - shopX) > 0.5 || !neighbors.children.length) {
+          shopX = newShopX; shop.position.x = shopX; buildNeighbors(shopX);
+        }
+      }
+      layout();
+      for (let i = 0; i < maxPeople; i++) spawn(true);
+      new ResizeObserver(layout).observe(host);
+
+      // 滑鼠視差
+      let mx = 0, my = 0;
+      window.addEventListener('pointermove', (e) => {
+        mx = (e.clientX / window.innerWidth - 0.5) * 2; my = (e.clientY / window.innerHeight - 0.5) * 2;
+      }, { passive: true });
+      camera.position.set(camBaseX, 3.4, CAM_DIST);
+
+      /* ---------- 主迴圈 ---------- */
+      let running = true, last = performance.now(), elapsed = 0, spawnTimer = 0;
+      new IntersectionObserver(([en]) => {
+        running = en.isIntersecting;
+        if (running) { last = performance.now(); requestAnimationFrame(loop); }
+      }).observe(host);
+
+      function loop(now) {
+        if (!running) return;
+        const dt = Math.min((now - last) / 1000, 0.05); last = now; elapsed += dt;
+
+        for (let i = people.length - 1; i >= 0; i--) if (!updatePerson(people[i], dt)) despawn(people[i]);
+        spawnTimer -= dt;
+        if (people.length < maxPeople && spawnTimer <= 0) { spawn(false); spawnTimer = rand(0.6, 1.8); }
+
+        noren.forEach((n, i) => {                                   // 門簾隨人進出擺動
+          const near = people.some((p) => Math.abs(p.g.position.x - (shopX + DOOR_X)) < 0.7 && Math.abs(p.g.position.z - FRONT) < 0.6);
+          const target = near ? -0.55 : Math.sin(elapsed * 1.6 + i) * 0.05;
+          n.rotation.x += (target - n.rotation.x) * Math.min(1, dt * 6);
+        });
+        lanterns.forEach((l, i) => { l.rotation.z = Math.sin(elapsed * 1.3 + i * 1.7) * 0.06; });
+        steam.forEach((s) => {
+          s.userData.t = (s.userData.t + dt * 0.35) % 1;
+          const t = s.userData.t;
+          s.position.set(Math.sin(t * 6 + s.id) * 0.12, 1.25 + t * 1.3, Math.cos(t * 5 + s.id) * 0.08);
+          s.scale.setScalar(0.6 + t * 1.8);
+          s.material.opacity = Math.sin(t * Math.PI) * 0.35;
+        });
+        inLight.intensity = 8 + Math.sin(elapsed * 3.1) * 0.4;
+
+        camera.position.x += (camBaseX + mx * 0.9 - camera.position.x) * Math.min(1, dt * 2.5);
+        camera.position.y += (3.4 - my * 0.35 - camera.position.y) * Math.min(1, dt * 2.5);
+        camera.lookAt(camera.position.x * 0.6, LOOK_Y, 0);
+
+        renderer.render(scene, camera);
+        requestAnimationFrame(loop);
+      }
+
+      host.classList.add('ready');
+      const flat = document.getElementById('street');
+      if (flat) flat.style.display = 'none';                        // 3D 成功 → 隱藏 2D 版本
+      requestAnimationFrame(loop);
+    })();
   </script>
 </body>
 </html>
