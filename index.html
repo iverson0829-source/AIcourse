@@ -6,6 +6,17 @@
   <title>煎時 JIANSHI｜極簡現代鍋貼專賣</title>
   <meta name="description" content="煎時鍋貼：台灣在地豬肉、每日現包、黃金煎脆比例。線上點餐、冷凍禮盒宅配到府。" />
 
+  <!-- PWA：可安裝到手機桌面、離線可開啟 -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#2a1d14" />
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="煎時鍋貼" />
+
   <!-- 字體：典雅標題 Noto Serif TC + 無襯線內文 Noto Sans TC -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -1108,6 +1119,13 @@
     renderStreet(); setupObservers(); onScroll(); refreshIcons();
   })();
   </script>
+  <!-- PWA：註冊 Service Worker -->
+  <script>
+    if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    }
+  </script>
+
   <!-- =====================================================
        3D 街景：人來人往、進出煎時店面（Three.js）
        載入失敗或不支援 WebGL 時，自動保留 2D 版本
